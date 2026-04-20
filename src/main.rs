@@ -17,6 +17,7 @@ use russh::{
 };
 use std::{
     collections::HashMap,
+    fmt::Debug,
     io,
     net::SocketAddr,
     path::{Path, PathBuf},
@@ -120,7 +121,7 @@ impl AppServer {
 
     pub async fn run(
         &mut self,
-        listen_addr: impl tokio::net::ToSocketAddrs + Send,
+        listen_addr: impl tokio::net::ToSocketAddrs + Send + Debug,
     ) -> color_eyre::Result<()> {
         let clients = self.clients.clone();
         tokio::spawn(async move {
@@ -161,6 +162,7 @@ impl AppServer {
             ..Default::default()
         };
 
+        info!("Starting SSH server on {:?}", listen_addr);
         self.run_on_address(config.into(), listen_addr).await?;
         Ok(())
     }
