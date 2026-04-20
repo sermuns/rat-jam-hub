@@ -1,3 +1,5 @@
+mod app;
+
 use clap::Parser;
 use color_eyre::eyre::Context;
 use ratatui::{
@@ -5,7 +7,8 @@ use ratatui::{
     backend::CrosstermBackend,
     layout::Rect,
     style::{Color, Style},
-    widgets::{Block, Borders, Clear, Paragraph},
+    text::ToLine,
+    widgets::{Block, Borders, Clear, Paragraph, Widget},
 };
 use russh::{
     Channel, ChannelId, Pty,
@@ -27,20 +30,12 @@ use tokio::sync::{
     Mutex,
     mpsc::{UnboundedSender, unbounded_channel},
 };
-use tracing::{info, level_filters::LevelFilter};
+use tracing::{error, info, level_filters::LevelFilter};
 use tracing_subscriber::EnvFilter;
 
+use crate::app::App;
+
 type SshTerminal = Terminal<CrosstermBackend<TerminalHandle>>;
-
-struct App {
-    pub counter: usize,
-}
-
-impl App {
-    pub fn new() -> App {
-        Self { counter: 0 }
-    }
-}
 
 struct TerminalHandle {
     sender: UnboundedSender<Vec<u8>>,
@@ -53,10 +48,10 @@ impl TerminalHandle {
         let (sender, mut receiver) = unbounded_channel::<Vec<u8>>();
         tokio::spawn(async move {
             while let Some(data) = receiver.recv().await {
-                let result = handle.data(channel_id, data).await;
-                if result.is_err() {
-                    eprintln!("Failed to send data: {result:?}");
-                }
+                handle
+                    .data(channel_id, data)
+                    .await
+                    .inspect_err(|e| error!("Failed to send data: {:?}", e));
             }
         });
         Self {
@@ -128,26 +123,10 @@ impl AppServer {
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
-                for (_, (terminal, app)) in clients.lock().await.iter_mut() {
+                for (_client_id, (terminal, app)) in clients.lock().await.iter_mut() {
                     app.counter += 1;
-
                     terminal
-                        .draw(|f| {
-                            let area = f.area();
-                            f.render_widget(Clear, area);
-                            let style = match app.counter % 3 {
-                                0 => Style::default().fg(Color::Red),
-                                1 => Style::default().fg(Color::Green),
-                                _ => Style::default().fg(Color::Blue),
-                            };
-                            let paragraph = Paragraph::new(format!("Counter: {}", app.counter))
-                                .alignment(ratatui::layout::Alignment::Center)
-                                .style(style);
-                            let block = Block::default()
-                                .title("Press 'c' to reset the counter!")
-                                .borders(Borders::ALL);
-                            f.render_widget(paragraph.block(block), area);
-                        })
+                        .draw(|frame| frame.render_widget(&*app, frame.area()))
                         .unwrap();
                 }
             }
@@ -170,7 +149,8 @@ impl AppServer {
 
 impl Server for AppServer {
     type Handler = Self;
-    fn new_client(&mut self, _: Option<std::net::SocketAddr>) -> Self {
+    fn new_client(&mut self, addr: Option<std::net::SocketAddr>) -> Self {
+        info!("New client from {:?}", addr);
         let s = self.clone();
         self.id += 1;
         s
@@ -200,10 +180,12 @@ impl Handler for AppServer {
         let mut clients = self.clients.lock().await;
         clients.insert(self.id, (terminal, app));
 
+        // everyone is welcome
         Ok(true)
     }
 
     async fn auth_publickey(&mut self, _: &str, _: &PublicKey) -> Result<Auth, Self::Error> {
+        // everyone is welcome
         Ok(Auth::Accept)
     }
 
@@ -216,8 +198,8 @@ impl Handler for AppServer {
         match data {
             // Pressing 'q' closes the connection.
             b"q" => {
-                self.clients.lock().await.remove(&self.id);
                 session.close(channel)?;
+                self.clients.lock().await.remove(&self.id);
             }
             // Pressing 'c' resets the counter for the app.
             // Only the client with the id sees the counter reset.
