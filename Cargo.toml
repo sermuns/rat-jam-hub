@@ -1,0 +1,12 @@
+[package]
+name = "rat-jam-hub"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+color-eyre = "0.6"
+ratatui = { version = "0.30", default-features = false, features = ["layout-cache", "crossterm"] }
+russh = { version = "0.60", default-features = false, features = ["aws-lc-rs"] }
+tokio = { version = "1", features = ["rt-multi-thread"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
